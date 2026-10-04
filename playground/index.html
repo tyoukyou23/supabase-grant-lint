@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>supabase-grant-lint playground</title>
+    <meta name="description" content="Paste Supabase migrations and see missing RLS, GRANT and REVOKE — runs entirely in your browser." />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <h1>supabase-grant-lint</h1>
+        <p>Catch missing RLS, GRANT and REVOKE in Supabase migrations — before they ship.</p>
+      </div>
+      <nav class="links">
+        <a href="https://github.com/tyoukyou23/supabase-grant-lint">GitHub</a>
+        <a href="https://www.npmjs.com/package/supabase-grant-lint">npm</a>
+      </nav>
+    </header>
+
+    <section class="examples" aria-label="Examples">
+      <div id="tabs" class="tabs" role="tablist"></div>
+      <p id="blurb" class="blurb"></p>
+    </section>
+
+    <main class="grid">
+      <section class="pane">
+        <div class="pane-head">
+          <label for="sql">Migrations</label>
+          <span class="hint">Split files with <code>-- file: name.sql</code></span>
+        </div>
+        <textarea id="sql" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+        <div class="options">
+          <label>Preset
+            <select id="preset">
+              <option value="recommended">recommended</option>
+              <option value="strict">strict</option>
+            </select>
+          </label>
+          <label>Defaults
+            <select id="defaults">
+              <option value="both">both worlds (recommended)</option>
+              <option value="auto-expose">auto-expose (before 2026-10-30)</option>
+              <option value="no-auto-expose">no auto-expose (new projects)</option>
+            </select>
+          </label>
+          <label class="grow">Tables your browser client reads
+            <input id="client" placeholder="todos, profiles" />
+          </label>
+        </div>
+      </section>
+
+      <section class="pane">
+        <div class="pane-head">
+          <span>Result</span>
+          <span id="summary" class="hint"></span>
+        </div>
+        <div id="results" class="results" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <code>npx supabase-grant-lint</code>
+      <span>MIT · runs locally, nothing is uploaded</span>
+    </footer>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

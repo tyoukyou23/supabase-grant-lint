@@ -1,0 +1,69 @@
+{
+  "name": "supabase-grant-lint",
+  "version": "0.1.0",
+  "description": "Catch missing RLS, GRANT and REVOKE in Supabase migrations before they ship — tables without row level security, SECURITY DEFINER functions callable by anon, REVOKEs that hit the wrong overload, and tables your client reads but never granted.",
+  "license": "MIT",
+  "author": "tyoukyou23",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tyoukyou23/supabase-grant-lint.git"
+  },
+  "homepage": "https://github.com/tyoukyou23/supabase-grant-lint#readme",
+  "keywords": [
+    "supabase",
+    "postgres",
+    "postgresql",
+    "rls",
+    "row-level-security",
+    "grant",
+    "migrations",
+    "lint",
+    "security",
+    "postgrest"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "supabase-grant-lint": "./dist/cli.js"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js",
+      "require": "./dist/node.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "README.ja.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test",
+    "dev": "vite playground",
+    "playground:build": "vite build playground --outDir ../playground-dist --emptyOutDir",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.2",
+    "vitest": "^4.1.11"
+  }
+}
