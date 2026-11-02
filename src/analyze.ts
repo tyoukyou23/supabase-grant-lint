@@ -153,8 +153,19 @@ interface FnRef {
   types: string[] | null;
 }
 
+interface PolicyRec extends Loc {
+  schema: string;
+  table: string;
+  name: string;
+  /** USING (...) / WITH CHECK (...) contents, comments and string contents blanked. */
+  using: string | null;
+  check: string | null;
+}
+
 interface State {
   rels: Map<string, RelRec>;
+  /** `schema.table` → policy name → policy. */
+  policies: Map<string, Map<string, PolicyRec>>;
   sequences: Map<string, PrivMap>;
   functions: Map<string, FnRec>;
   fnRevokes: Map<string, { sig: string; file: string; line: number }[]>;
@@ -228,6 +239,39 @@ function viewInvoker(options: string): boolean | null {
   return !["false", "off", "0", "no"].includes(v);
 }
 
+/** USING (...) and WITH CHECK (...) of a CREATE/ALTER POLICY tail. */
+function policyClauses(tail: string): { using: string | null; check: string | null } {
+  const plain = blankQuoted(tail);
+  const grab = (re: RegExp) => {
+    const m = re.exec(plain);
+    if (!m) return null;
+    const open = m.index + m[0].length - 1;
+    const close = matchParen(tail, open);
+    return close === -1 ? null : tail.slice(open + 1, close);
+  };
+  return { using: grab(/\bUSING\s*\(/i), check: grab(/\bWITH\s+CHECK\s*\(/i) };
+}
+
+/**
+ * Bare calls in a policy expression that Postgres would evaluate once per row:
+ * auth.uid() / auth.role() / auth.jwt() / auth.email(), and zero-argument functions
+ * defined in the migrations. `(select f())` is an InitPlan, evaluated once per query.
+ */
+function bareCalls(expr: string, zeroArg: Set<string>): string[] {
+  const out = new Set<string>();
+  const re = new RegExp(`(?<![A-Za-z0-9_$."])(${QNAME})\\s*\\(\\s*\\)`, "g");
+  for (const m of expr.matchAll(re)) {
+    const { schema, name } = splitQName(m[1]);
+    const qualified = /\./.test(m[1]);
+    const isAuth = schema === "auth" && ["uid", "role", "jwt", "email"].includes(name);
+    const isHelper = zeroArg.has(qkey(qualified ? schema : "public", name));
+    if (!isAuth && !isHelper) continue;
+    if (/\(\s*SELECT\s*$/i.test(expr.slice(0, m.index))) continue; // already (select f())
+    out.add(`${qualified ? `${schema}.` : ""}${name}()`);
+  }
+  return [...out];
+}
+
 // ───────── statement patterns ─────────
 
 const REL_KEYWORD = `(TABLE|VIEW|MATERIALIZED\\s+VIEW|FOREIGN\\s+TABLE)`;
@@ -244,6 +288,9 @@ const RE = {
   dropRel: new RegExp(`^DROP\\s+${REL_KEYWORD}\\s+(?:IF\\s+EXISTS\\s+)?(.+?)(?:\\s+(?:CASCADE|RESTRICT))?$`, "i"),
   alterRel: new RegExp(`^ALTER\\s+${REL_KEYWORD}\\s+(?:IF\\s+EXISTS\\s+)?(?:ONLY\\s+)?(${QNAME})\\s*\\*?\\s+([\\s\\S]*)$`, "i"),
   serialCol: new RegExp(`(?:^|[(,]|ADD\\s+(?:COLUMN\\s+)?(?:IF\\s+NOT\\s+EXISTS\\s+)?)\\s*(${IDENT})\\s+(?:small|big)?serial[248]?\\b`, "gi"),
+  createPolicy: new RegExp(`^CREATE\\s+POLICY\\s+(${IDENT})\\s+ON\\s+(${QNAME})([\\s\\S]*)$`, "i"),
+  alterPolicy: new RegExp(`^ALTER\\s+POLICY\\s+(${IDENT})\\s+ON\\s+(${QNAME})([\\s\\S]*)$`, "i"),
+  dropPolicy: new RegExp(`^DROP\\s+POLICY\\s+(?:IF\\s+EXISTS\\s+)?(${IDENT})\\s+ON\\s+(${QNAME})`, "i"),
   createFn: new RegExp(`^CREATE\\s+(OR\\s+REPLACE\\s+)?FUNCTION\\s+(${QNAME})\\s*\\(`, "i"),
   triggerReturn: /\bRETURNS\s+(?:"?pg_catalog"?\s*\.\s*)?"?(?:event_)?trigger"?(?=\s|$)/i,
   alterFn: /^ALTER\s+(?:FUNCTION|ROUTINE)\s+([\s\S]+)$/i,
@@ -291,8 +338,13 @@ function replay(files: MigrationFile[], o: ReplayOptions): State {
     return out;
   };
 
-  const st: State = { rels: new Map(), sequences: new Map(), functions: new Map(), fnRevokes: new Map() };
-  const { rels, sequences, functions, fnRevokes } = st;
+  const st: State = { rels: new Map(), policies: new Map(), sequences: new Map(), functions: new Map(), fnRevokes: new Map() };
+  const { rels, policies, sequences, functions, fnRevokes } = st;
+  const policiesOf = (schema: string, table: string) => {
+    const k = qkey(schema, table);
+    if (!policies.has(k)) policies.set(k, new Map());
+    return policies.get(k)!;
+  };
 
   const addSequence = (schema: string, name: string) => sequences.set(qkey(schema, name), initialPrivs("sequences", schema));
   const fnMatches = (ref: FnRef): FnRec[] =>
@@ -362,6 +414,7 @@ function replay(files: MigrationFile[], o: ReplayOptions): State {
         for (const item of splitTopLevel(m[2])) {
           const { schema, name } = splitQName(item);
           rels.delete(qkey(schema, name));
+          policies.delete(qkey(schema, name));
         }
         continue;
       }
@@ -416,6 +469,40 @@ function replay(files: MigrationFile[], o: ReplayOptions): State {
           const { schema, name } = splitQName(item);
           sequences.delete(qkey(schema, name));
         }
+        continue;
+      }
+
+      if ((m = RE.createPolicy.exec(t))) {
+        const { schema, name: table } = splitQName(m[2]);
+        const name = normIdent(m[1]);
+        policiesOf(schema, table).set(name, { ...loc, schema, table, name, ...policyClauses(m[3]) });
+        continue;
+      }
+
+      if ((m = RE.alterPolicy.exec(t))) {
+        const { schema, name: table } = splitQName(m[2]);
+        const name = normIdent(m[1]);
+        const list = policiesOf(schema, table);
+        const rec = list.get(name);
+        if (!rec) continue;
+        const ren = new RegExp(`^\\s*RENAME\\s+TO\\s+(${IDENT})\\s*$`, "i").exec(m[3]);
+        if (ren) {
+          list.delete(name);
+          rec.name = normIdent(ren[1]);
+          list.set(rec.name, rec);
+          continue;
+        }
+        const { using, check } = policyClauses(m[3]);
+        // ALTER POLICY replaces only the clauses it names; the policy now "lives" here
+        if (using !== null) rec.using = using;
+        if (check !== null) rec.check = check;
+        if (using !== null || check !== null) Object.assign(rec, loc);
+        continue;
+      }
+
+      if ((m = RE.dropPolicy.exec(t))) {
+        const { schema, name: table } = splitQName(m[2]);
+        policies.get(qkey(schema, table))?.delete(normIdent(m[1]));
         continue;
       }
 
@@ -689,6 +776,18 @@ export function analyze(files: MigrationFile[], options: AnalyzeOptions = {}): A
       ? `A REVOKE was written for ${others[0].sig} (${others[0].file}:${others[0].line}), a different overload, so it does not cover ${f.sig}.`
       : `Still executable by: ${holders.map((r) => (r === "public" ? "PUBLIC" : r)).join(", ")}.`;
     emit("definer-public-execute", f, f.schema, f.sig.slice(f.schema === "public" ? 0 : f.schema.length + 1), undefined, note);
+  }
+
+  const zeroArg = new Set(
+    [...open.functions.values()].filter((f) => f.types.length === 0 && !f.trigger).map((f) => qkey(f.schema, f.name))
+  );
+  for (const list of open.policies.values()) {
+    for (const p of list.values()) {
+      if (!exposed.has(p.schema)) continue;
+      const calls = bareCalls(`${p.using || ""} ${p.check || ""}`, zeroArg);
+      if (!calls.length) continue;
+      emit("rls-per-row-call", p, p.schema, `${p.table}.${p.name}`, undefined, `Bare: ${calls.join(", ")}. Wrap each as (select ...).`);
+    }
   }
 
   violations.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.rule.localeCompare(b.rule));

@@ -48,6 +48,7 @@ Supabase's [Security Advisor](https://supabase.com/docs/guides/database/database
 | `serial-sequence-grant` | warn | error | A client role may `INSERT`, but has no `USAGE` on the `serial` column's sequence |
 | `missing-explicit-revoke` | off | error | No explicit `REVOKE ... FROM anon, authenticated` |
 | `anon-table-access` | off | error | `anon` (or `PUBLIC`) holds SELECT/INSERT/UPDATE/DELETE. RLS still applies, so this is defence in depth |
+| `rls-per-row-call` | warn | error | A policy calls `auth.uid()` / `auth.role()` / `auth.jwt()` or a zero-argument helper from your migrations without `(select ...)`, so it runs once per row. A helper that queries a table turns every scan into a query per row |
 
 `strict` is meant for teams that want every table spelled out. On an existing project, adopt it with a [baseline](#adopting-on-an-existing-project-the-baseline).
 
@@ -58,7 +59,7 @@ The shape that passes `strict`:
 ```sql
 CREATE TABLE notes (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, owner uuid NOT NULL, body text);
 ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "owner" ON notes FOR ALL TO authenticated USING (owner = auth.uid());
+CREATE POLICY "owner" ON notes FOR ALL TO authenticated USING (owner = (select auth.uid()));
 
 REVOKE ALL ON notes FROM anon, authenticated;                       -- REVOKE first
 GRANT SELECT, INSERT, UPDATE, DELETE ON notes TO authenticated;     -- what the policies allow
@@ -196,7 +197,7 @@ Besides unit tests, the model is checked against real PostgreSQL. Randomly gener
 
 - It is a migration linter, not a database scanner: privileges changed by hand in the dashboard are invisible to it. Run Supabase's Security Advisor as well.
 - Dynamic SQL (`EXECUTE format(...)`) is not executed. Use `grant-lint-as`.
-- Not checked yet: the contents of RLS policies, objects created through `SET search_path` without a schema-qualified name, `SELECT ... INTO`, and declarative schema files in `supabase/schemas/`.
+- Not checked yet: what RLS policies allow (only how they call functions is checked), objects created through `SET search_path` without a schema-qualified name, `SELECT ... INTO`, and declarative schema files in `supabase/schemas/`.
 - Column-level grants (`GRANT SELECT (col)`) count as access to the table.
 
 ## License

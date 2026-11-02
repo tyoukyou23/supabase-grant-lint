@@ -337,3 +337,67 @@ describe("robustness", () => {
     expect(rules("GRANT anon TO authenticator;")).toEqual([]);
   });
 });
+
+describe("policies", () => {
+  const T = `CREATE TABLE notes (id int, owner uuid); ALTER TABLE notes ENABLE ROW LEVEL SECURITY;`;
+  const only = (sql: string, opts: AnalyzeOptions = {}) =>
+    lint(T + sql, { ...opts, rules: { "missing-service-role-grant": "off", ...opts.rules } })
+      .filter((v) => v.rule === "rls-per-row-call")
+      .map((v) => `${v.object} | ${v.note}`);
+
+  it("rls-per-row-call: bare auth.uid() / auth.jwt() in USING and WITH CHECK", () => {
+    expect(only(`CREATE POLICY "own" ON notes FOR ALL TO authenticated USING (owner = auth.uid());`)).toEqual([
+      "notes.own | Bare: auth.uid(). Wrap each as (select ...).",
+    ]);
+    expect(
+      only(`CREATE POLICY p ON public.notes FOR INSERT WITH CHECK (owner = auth.uid() AND auth.jwt() ->> 'role' = 'x');`)
+    ).toEqual(["notes.p | Bare: auth.uid(), auth.jwt(). Wrap each as (select ...)."]);
+  });
+
+  it("accepts (select ...) in any spelling", () => {
+    expect(only(`CREATE POLICY p ON notes USING ((select auth.uid()) = owner);`)).toEqual([]);
+    expect(only(`CREATE POLICY p ON notes USING (owner = ( SELECT auth.uid() AS uid));`)).toEqual([]);
+  });
+
+  it("zero-argument helpers defined in the migrations count; helpers with arguments do not", () => {
+    const fns = `
+      CREATE FUNCTION public.current_profile_role() RETURNS text LANGUAGE sql STABLE SECURITY DEFINER AS $$ SELECT 'x' $$;
+      CREATE FUNCTION can_write(uuid) RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT true $$;`;
+    expect(only(fns + `CREATE POLICY p ON notes USING (current_profile_role() = 'admin' OR can_write(owner));`)).toEqual([
+      "notes.p | Bare: current_profile_role(). Wrap each as (select ...).",
+    ]);
+    expect(only(fns + `CREATE POLICY p ON notes USING ((select public.current_profile_role()) = 'admin');`)).toEqual([]);
+    // an unknown zero-arg call (now(), a builtin) is left alone
+    expect(only(`CREATE POLICY p ON notes USING (now() > '2020-01-01');`)).toEqual([]);
+  });
+
+  it("follows ALTER POLICY, RENAME and DROP to the final state", () => {
+    const bare = `CREATE POLICY p ON notes USING (owner = auth.uid());`;
+    expect(only(bare + `ALTER POLICY p ON notes USING ((select auth.uid()) = owner);`)).toEqual([]);
+    expect(only(bare + `ALTER POLICY p ON notes TO authenticated;`)).toHaveLength(1);
+    expect(only(bare + `ALTER POLICY p ON notes RENAME TO q;`)).toEqual(["notes.q | Bare: auth.uid(). Wrap each as (select ...)."]);
+    expect(only(bare + `DROP POLICY IF EXISTS p ON notes;`)).toEqual([]);
+    expect(only(bare + `DROP TABLE notes;`)).toEqual([]);
+  });
+
+  it("ALTER POLICY replaces only the clause it names", () => {
+    const sql = `CREATE POLICY p ON notes FOR UPDATE USING (owner = auth.uid()) WITH CHECK (owner = auth.uid());
+                 ALTER POLICY p ON notes USING ((select auth.uid()) = owner);`;
+    expect(only(sql)).toHaveLength(1); // WITH CHECK is still bare
+  });
+
+  it("is a warning in recommended, an error in strict, and can be ignored", () => {
+    const sql = T + `CREATE POLICY p ON notes USING (owner = auth.uid());`;
+    const sev = (preset: "recommended" | "strict") =>
+      lint(sql, { preset }).find((v) => v.rule === "rls-per-row-call")?.severity;
+    expect(sev("recommended")).toBe("warn");
+    expect(sev("strict")).toBe("error");
+    expect(only(`-- grant-lint-ignore rls-per-row-call\nCREATE POLICY p ON notes USING (owner = auth.uid());`)).toEqual([]);
+  });
+
+  it("only checks exposed schemas, keyed by table and policy", () => {
+    expect(only(`CREATE POLICY p ON storage.objects USING (owner = auth.uid());`)).toEqual([]);
+    const v = lint(T + `CREATE POLICY "own rows" ON notes USING (owner = auth.uid());`).find((x) => x.rule === "rls-per-row-call")!;
+    expect(v.key).toBe("public.notes.own rows::rls-per-row-call");
+  });
+});

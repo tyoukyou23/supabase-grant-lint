@@ -42,6 +42,7 @@ Supabase の [Security Advisor](https://supabase.com/docs/guides/database/databa
 | `serial-sequence-grant` | warn | error | INSERT できる役割が `serial` 列の sequence に `USAGE` を持っていない |
 | `missing-explicit-revoke` | off | error | `REVOKE ... FROM anon, authenticated` が明示されていない |
 | `anon-table-access` | off | error | `anon`（または `PUBLIC`）が SELECT/INSERT/UPDATE/DELETE を持っている。RLS は効くので多層防御の観点 |
+| `rls-per-row-call` | warn | error | policy が `auth.uid()` / `auth.role()` / `auth.jwt()` や migration で作った引数なしの判定関数を `(select ...)` で包まずに呼んでいて、行ごとに評価される。表を引く関数だと、全表走査のたびに行数ぶんの問い合わせになる |
 
 `strict` はすべての表の権限を明示したいチーム向けです。既存プロジェクトでは [baseline](#既存プロジェクトへの導入-baseline) と組み合わせて導入してください。
 
@@ -52,7 +53,7 @@ Supabase の [Security Advisor](https://supabase.com/docs/guides/database/databa
 ```sql
 CREATE TABLE notes (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, owner uuid NOT NULL, body text);
 ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "owner" ON notes FOR ALL TO authenticated USING (owner = auth.uid());
+CREATE POLICY "owner" ON notes FOR ALL TO authenticated USING (owner = (select auth.uid()));
 
 REVOKE ALL ON notes FROM anon, authenticated;                       -- REVOKE を先に
 GRANT SELECT, INSERT, UPDATE, DELETE ON notes TO authenticated;     -- policy が許す操作だけ
@@ -190,7 +191,7 @@ const { violations } = analyze(
 
 - migration の検査であって DB の走査ではありません。ダッシュボードから手で変えた権限は見えません。Supabase の Security Advisor も併用してください。
 - 動的 SQL（`EXECUTE format(...)`）は実行しません。`grant-lint-as` を使ってください。
-- まだ見ていないもの: RLS policy の中身、スキーマ名を書かずに `SET search_path` で作った物、`SELECT ... INTO`、`supabase/schemas/` の宣言的スキーマ。
+- まだ見ていないもの: RLS policy が何を許しているか（関数の呼び方だけを見ています）、スキーマ名を書かずに `SET search_path` で作った物、`SELECT ... INTO`、`supabase/schemas/` の宣言的スキーマ。
 - 列単位の付与（`GRANT SELECT (列)`）は表への権限として数えます。
 
 ## ライセンス

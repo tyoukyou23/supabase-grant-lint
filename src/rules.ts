@@ -9,7 +9,8 @@ export type RuleId =
   | "missing-service-role-grant"
   | "serial-sequence-grant"
   | "missing-explicit-revoke"
-  | "anon-table-access";
+  | "anon-table-access"
+  | "rls-per-row-call";
 
 export type Preset = "recommended" | "strict";
 
@@ -96,6 +97,14 @@ export const RULES: Record<RuleId, RuleMeta> = {
       "anon (or PUBLIC) holds SELECT/INSERT/UPDATE/DELETE on this table. RLS still applies; this is defence in depth.",
     fix: "REVOKE ALL ON {name} FROM anon;  -- if anonymous access is intended, ignore this rule for the table",
     recommended: "off",
+    strict: "error",
+  },
+  "rls-per-row-call": {
+    id: "rls-per-row-call",
+    summary:
+      "RLS policy calls auth.uid() / auth.role() / auth.jwt() or a zero-argument helper function bare, so Postgres evaluates it once per row instead of once per query.",
+    fix: "Wrap the call in a scalar subquery: USING ((select auth.uid()) = user_id)  -- same result, evaluated once",
+    recommended: "warn",
     strict: "error",
   },
 };

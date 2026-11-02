@@ -22,7 +22,7 @@ export const EXAMPLES: Example[] = [
 ALTER TABLE todos ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "own todos" ON todos
-  FOR ALL TO authenticated USING (user_id = auth.uid());
+  FOR ALL TO authenticated USING (user_id = (select auth.uid()));
 -- ...but no GRANT, so the policy is never reached.
 `,
   },
@@ -76,7 +76,7 @@ RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN END $$;
     sql: `CREATE TABLE posts (id uuid PRIMARY KEY, author uuid, draft boolean, body text);
 ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "published or mine" ON posts FOR SELECT
-  USING (NOT draft OR author = auth.uid());
+  USING (NOT draft OR author = (select auth.uid()));
 GRANT SELECT ON posts TO anon, authenticated;
 GRANT ALL ON posts TO service_role;
 
@@ -119,7 +119,7 @@ END $$;
   body text
 );
 ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "owner" ON notes FOR ALL TO authenticated USING (owner = auth.uid());
+CREATE POLICY "owner" ON notes FOR ALL TO authenticated USING (owner = (select auth.uid()));
 
 REVOKE ALL ON notes FROM anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON notes TO authenticated;

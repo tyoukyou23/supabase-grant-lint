@@ -1,6 +1,6 @@
 {
   "name": "supabase-grant-lint",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Catch missing RLS, GRANT and REVOKE in Supabase migrations before they ship — tables without row level security, SECURITY DEFINER functions callable by anon, REVOKEs that hit the wrong overload, and tables your client reads but never granted.",
   "license": "MIT",
   "author": "tyoukyou23",

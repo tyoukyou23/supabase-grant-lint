@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0
+
+- New rule `rls-per-row-call` (recommended: warn, strict: error). A policy that calls `auth.uid()`, `auth.role()`, `auth.jwt()` or a zero-argument function defined in your migrations without wrapping it in `(select ...)` is evaluated once per row instead of once per query. When the helper is `SECURITY DEFINER` and reads a table (the usual `current_user_role()`), every row of every scan pays for an extra query. Seen in production: one Storage signed-URL lookup took 142 ms and 21,616 buffers; wrapping the calls brought it to 7 ms and 786 buffers, with exactly the same rows visible.
+- Policies are now replayed: `CREATE POLICY`, `ALTER POLICY` (only the clauses it names), `ALTER POLICY ... RENAME TO`, `DROP POLICY`, and `DROP TABLE`. Baseline key: `schema.table.policy::rls-per-row-call`.
+- README and playground examples use `(select auth.uid())`.
+
 ## 0.1.0 — unreleased
 
 First release.
