@@ -26,7 +26,7 @@
     "node": ">=20"
   },
   "bin": {
-    "supabase-grant-lint": "./dist/cli.js"
+    "supabase-grant-lint": "dist/cli.js"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
